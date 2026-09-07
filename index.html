@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bainview — démonstration</title>
+<meta name="description" content="Configurez une salle de bain en 3D depuis votre navigateur : dimensions, aménagement, matériaux, métré et fiche projet.">
+<link rel="stylesheet" href="css/ui.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.166.1/examples/jsm/"
+} }
+</script>
+<style>
+  .bandeau-demo{
+    background:var(--vert);color:#fff;padding:9px 18px;font-size:13px;
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex:none;
+  }
+  .bandeau-demo b{font-weight:600}
+  .bandeau-demo .fin{margin-left:auto;opacity:.85;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="appli">
+
+  <div class="bandeau-demo">
+    <b>Démonstration</b>
+    <span>Tout se calcule dans votre navigateur : rien n'est envoyé, rien n'est enregistré ailleurs que sur votre appareil.</span>
+    <span class="fin">Mettez le nom de votre entreprise, puis imprimez la fiche projet.</span>
+  </div>
+
+  <div class="barre">
+    <div class="marque"><i></i> Bainview</div>
+    <div class="espace"></div>
+    <span id="etatSauvegarde" class="muet"></span>
+    <button id="btnReinit" class="btn-f">Réinitialiser</button>
+  </div>
+
+  <div class="corps">
+    <aside class="panneau">
+      <div class="bloc">
+        <div class="champ">
+          <label for="eNom">Votre entreprise</label>
+          <input id="eNom" type="text" maxlength="80" placeholder="Sanitaire Durand">
+        </div>
+        <div class="duo">
+          <div class="champ" style="margin-bottom:0">
+            <label for="eTel">Téléphone</label>
+            <input id="eTel" type="text" maxlength="40" placeholder="01 23 45 67 89">
+          </div>
+          <div class="champ" style="margin-bottom:0">
+            <label for="eCouleur">Couleur</label>
+            <input id="eCouleur" type="color" style="height:40px;padding:4px">
+          </div>
+        </div>
+      </div>
+
+      <div class="bloc">
+        <div class="champ">
+          <label for="pNom">Nom du projet</label>
+          <input id="pNom" type="text" maxlength="100">
+        </div>
+        <div class="champ" style="margin-bottom:0">
+          <label for="pClient">Client</label>
+          <input id="pClient" type="text" maxlength="100" placeholder="M. et Mme Martin">
+        </div>
+      </div>
+
+      <div class="bloc">
+        <h3>Dimensions de la pièce</h3>
+        <div class="trio">
+          <div><label for="dL">Largeur</label><input id="dL" type="number" step="0.05" min="1.6" max="6"></div>
+          <div><label for="dP">Profondeur</label><input id="dP" type="number" step="0.05" min="1.6" max="6"></div>
+          <div><label for="dH">Hauteur</label><input id="dH" type="number" step="0.05" min="2.1" max="4.5"></div>
+        </div>
+        <p class="muet mono" id="surface" style="margin:9px 0 0"></p>
+      </div>
+
+      <div class="bloc">
+        <h3>Porte</h3>
+        <label>Mur d'entrée</label>
+        <div class="segment" id="murPorte">
+          <button data-mur="avant">Sud</button>
+          <button data-mur="droite">Est</button>
+          <button data-mur="fond">Nord</button>
+          <button data-mur="gauche">Ouest</button>
+        </div>
+        <div class="champ" style="margin:12px 0 0">
+          <label for="posPorte">Position sur le mur</label>
+          <div class="curseur">
+            <input id="posPorte" type="range" min="0" max="1" step="0.02">
+            <span class="val" id="posPorteVal"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloc">
+        <h3>Parti d'aménagement</h3>
+        <div class="choix" id="partis"></div>
+      </div>
+
+      <div class="bloc">
+        <h3>Faïence</h3>
+        <div class="pastilles" id="faiences"></div>
+        <p class="muet" id="nomFaience" style="margin:8px 0 0"></p>
+      </div>
+
+      <div class="bloc">
+        <h3>Robinetterie</h3>
+        <div class="segment" id="metaux"></div>
+        <h3 style="margin-top:14px">Bois</h3>
+        <div class="segment" id="bois"></div>
+      </div>
+
+      <div class="bloc">
+        <h3>Équipements</h3>
+        <label class="bascule">Baignoire si la place le permet <input type="checkbox" id="optBaignoire"></label>
+        <label class="bascule">WC suspendu <input type="checkbox" id="optWc"></label>
+        <label class="bascule">Fenêtre haute <input type="checkbox" id="optVerriere"></label>
+        <label class="bascule">Végétation <input type="checkbox" id="optPlantes"></label>
+      </div>
+
+      <div class="bloc">
+        <h3>Métré et estimation</h3>
+        <div id="metre"></div>
+        <p class="muet" style="margin:10px 0 0;font-size:11.5px">
+          Estimation calculée sur des tarifs de référence. Dans la version complète,
+          chaque entreprise saisit les siens.
+        </p>
+      </div>
+
+      <div class="bloc">
+        <h3>La version complète en plus</h3>
+        <ul class="muet" style="margin:0;padding-left:16px;font-size:12.5px;line-height:1.6">
+          <li>Un lien à envoyer au client, à votre marque</li>
+          <li>Jusqu'à trois versions comparables dans le même lien</li>
+          <li>Le client retient celle qu'il préfère</li>
+          <li>Ses remarques posées directement sur la 3D</li>
+          <li>Vos tarifs, vos projets enregistrés</li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="scene" id="scene">
+      <div class="chargement" id="chargement">Construction de la pièce…</div>
+      <div class="resume" id="resume"></div>
+      <div class="outils">
+        <button data-vue="ensemble" class="actif">Ensemble</button>
+        <button data-vue="entree">Entrée</button>
+        <button data-vue="douche">Douche</button>
+        <button data-vue="vasque">Vasque</button>
+        <button data-vue="plan">Plan</button>
+        <span class="sep"></span>
+        <button id="btnJour" class="actif">Jour</button>
+        <button id="btnNuit">Nuit</button>
+        <span class="sep"></span>
+        <button id="btnRotation">Rotation</button>
+        <button id="btnPng">PNG</button>
+        <button id="btnGlb">3D</button>
+        <button id="btnFiche">Fiche PDF</button>
+        <button id="btnCsv">Métré CSV</button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="fiche" class="fiche" hidden></div>
+
+<script type="module" src="js/demo.mjs"></script>
+</body>
+</html>
