@@ -18,67 +18,24 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
-/* =======================================================================
-   1. CATALOGUE
-   ======================================================================= */
-export const FAIENCES = {
-  emeraude:   { nom: 'Vert émeraude',  h: 163, s: 72, l: 20, hex: '#0e6b52', format: '10 × 10 zellige', prix: 89 },
-  sauge:      { nom: 'Vert sauge',     h: 120, s: 20, l: 42, hex: '#6d8a63', format: '10 × 10 zellige', prix: 82 },
-  bleucanard: { nom: 'Bleu canard',    h: 191, s: 62, l: 24, hex: '#176b7a', format: '10 × 10 zellige', prix: 89 },
-  terracotta: { nom: 'Terracotta',     h: 14,  s: 52, l: 42, hex: '#a35a3a', format: '10 × 10 terre cuite', prix: 74 },
-  sable:      { nom: 'Sable mat',      h: 34,  s: 22, l: 62, hex: '#bda683', format: '10 × 10 mat', prix: 58 },
-  blanc:      { nom: 'Blanc craie',    h: 40,  s: 8,  l: 84, hex: '#dedad2', format: '10 × 10 mat', prix: 42 },
-  anthracite: { nom: 'Anthracite',     h: 205, s: 8,  l: 20, hex: '#2f353a', format: '10 × 10 mat', prix: 66 }
-};
-export const METAUX = {
-  laiton: { nom: 'Laiton brossé', hex: 0xc9a15a, rug: 0.21, css: '#c9a15a', coef: 1.35 },
-  inox:   { nom: 'Inox brossé',   hex: 0xc4c9cb, rug: 0.33, css: '#c4c9cb', coef: 1.15 },
-  noir:   { nom: 'Noir mat',      hex: 0x2a2e30, rug: 0.48, css: '#2a2e30', coef: 1.25 },
-  chrome: { nom: 'Chromé',        hex: 0xe2e6e8, rug: 0.08, css: '#e2e6e8', coef: 1 }
-};
-export const BOIS = {
-  chene: { nom: 'Chêne clair', rgb: [138, 96, 58],  css: '#8a603a' },
-  teck:  { nom: 'Teck',        rgb: [126, 82, 46],  css: '#7e522e' },
-  noyer: { nom: 'Noyer',       rgb: [86, 56, 38],   css: '#563826' },
-  frene: { nom: 'Frêne blanc', rgb: [178, 152, 116], css: '#b29874' }
-};
-export const PARTIS = {
-  spa:          { nom: 'Douche + baignoire', desc: 'Douche à l’italienne d’angle, baignoire îlot si la place le permet' },
-  traversante:  { nom: 'Douche traversante', desc: 'Douche sur toute la largeur, banc maçonné, double vasque' },
-  wetroom:      { nom: 'Wetroom & bain japonais', desc: 'Aucune paroi, sol en pente, ofuro encastré' }
-};
-
-/* Tarifs indicatifs de référence, en euros HT. Chaque entreprise saisit les siens
-   dans ses réglages : ceux-ci ne servent que de point de départ. */
-export const TARIFS = {
-  faience: null,        // null = prix du catalogue selon la teinte choisie
-  sol: 62,              // fourniture du revêtement de sol, au m²
-  poseM2: 78,           // pose carrelage mur et sol, au m²
-  etancheite: 34,       // système d'étanchéité liquide sous carrelage, au m²
-  douche: 1450,         // receveur de plain-pied, paroi, robinetterie
-  baignoire: 1900,
-  vasque: 1150,         // meuble, plan, vasque, mitigeur
-  wc: 780,
-  ofuro: 3400,
-  claustra: 620,
-  verriere: 890,
-  depose: 950           // dépose de l'existant et évacuation
-};
-
-export function configParDefaut() {
-  return {
-    piece: { L: 3, P: 3, H: 2.5 },
-    porte: { mur: 'avant', position: 0.5 },
-    parti: 'spa',
-    materiaux: { faience: 'emeraude', metal: 'laiton', bois: 'chene' },
-    options: { baignoire: true, wc: true, plantes: true, verriere: true }
-  };
-}
+/* Le catalogue, les règles de dimensionnement, le métré et le chiffrage vivent
+   dans calcul.mjs : aucune dépendance graphique, donc testables sans navigateur.
+   On les ré-exporte pour que l'interface n'ait qu'un point d'entrée. */
+import {
+  FAIENCES, METAUX, BOIS, PARTIS, TARIFS, BORNES, REGLES,
+  configParDefaut, metrer, estimer, euros
+} from './calcul.mjs';
+export { FAIENCES, METAUX, BOIS, PARTIS, TARIFS, BORNES, REGLES,
+         configParDefaut, metrer, estimer, euros };
 
 /* =======================================================================
    2. TEXTURES PROCÉDURALES (mises en cache par palette)
    ======================================================================= */
-const cacheTex = new Map();
+/* Caches séparés par matière : changer la teinte de faïence ne doit pas
+   relancer la génération du bois ni celle du sol, qui n'en dépendent pas. */
+const cacheFaience = new Map();
+const cacheBois = new Map();
+let cacheSol = null;
 let ANISO = 8;
 
 function cv(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
@@ -146,7 +103,8 @@ function faience(p, motif, cases) {
 
 /* enduit lissé, sans joint */
 function enduit(rgb, motif, contraste) {
-  const S = 512, c = cv(S, S), g = c.getContext('2d');
+  /* 256 px suffisent : la matière est lisse, l'échantillonnage GPU fait le reste */
+  const S = 256, c = cv(S, S), g = c.getContext('2d');
   const f1 = fbm([[3, 1], [7, 0.6], [17, 0.32], [41, 0.16]]);
   const f2 = fbm([[9, 1], [23, 0.5]]);
   const img = g.createImageData(S, S);
@@ -163,7 +121,7 @@ function enduit(rgb, motif, contraste) {
 }
 
 function boisTex(rgb) {
-  const S = 1024, c = cv(S, S), g = c.getContext('2d');
+  const S = 512, c = cv(S, S), g = c.getContext('2d');
   const f = fbm([[4, 1], [11, 0.5], [29, 0.25]]);
   const img = g.createImageData(S, S);
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
@@ -179,18 +137,21 @@ function boisTex(rgb) {
 }
 
 function palette(mat) {
-  const cle = mat.faience + '|' + mat.bois;
-  if (cacheTex.has(cle)) return cacheTex.get(cle);
-  const f = FAIENCES[mat.faience] ?? FAIENCES.emeraude;
-  const p = {
-    grand: faience(f, 0.5, 5),
-    mosaique: faience(f, 0.3, 6),
-    enduitHaut: enduit([Math.round(f.l * 2.3) + 30, Math.round(f.l * 2.2) + 40, Math.round(f.l * 2.1) + 36], 2.2, 0.3),
-    sol: enduit([132, 122, 105], 2.6, 0.22),
-    bois: boisTex((BOIS[mat.bois] ?? BOIS.chene).rgb)
-  };
-  cacheTex.set(cle, p);
-  return p;
+  const cf = mat.faience ?? 'emeraude';
+  if (!cacheFaience.has(cf)) {
+    const f = FAIENCES[cf] ?? FAIENCES.emeraude;
+    cacheFaience.set(cf, {
+      grand: faience(f, 0.5, 5),
+      mosaique: faience(f, 0.3, 6),
+      enduitHaut: enduit(
+        [Math.round(f.l * 2.3) + 30, Math.round(f.l * 2.2) + 40, Math.round(f.l * 2.1) + 36], 2.2, 0.3)
+    });
+  }
+  const cb = mat.bois ?? 'chene';
+  if (!cacheBois.has(cb)) cacheBois.set(cb, boisTex((BOIS[cb] ?? BOIS.chene).rgb));
+  /* le sol ne dépend d'aucun choix : une seule génération pour toute la session */
+  if (!cacheSol) cacheSol = enduit([132, 122, 105], 2.6, 0.22);
+  return { ...cacheFaience.get(cf), bois: cacheBois.get(cb), sol: cacheSol };
 }
 
 /* =======================================================================
@@ -511,16 +472,16 @@ function niche(g, M, x, z, largeur, hauteur, y, normale) {
 function agencement(g, M, cfg, W, D, H, murs) {
   const parti = cfg.parti;
   const opt = cfg.options ?? {};
-  const bandeau = H >= 3 ? 2.6 : Math.max(1.9, H - 0.35);
+  const bandeau = REGLES.bandeau(H);
   const resume = { elements: [], alertes: [], postes: [] };
 
   if (parti === 'traversante') {
     /* --- douche sur toute la largeur, au fond --- */
-    const prof = Math.max(0.9, Math.min(1.35, D * 0.36));
+    const prof = REGLES.doucheTraversante(D);
     const z0 = D - prof;
     const bac = panneau(g, W, prof, M.mosaique);
     bac.rotation.x = -Math.PI / 2; bac.position.set(0, 0.004, D);
-    const entree = Math.min(0.95, W * 0.34);
+    const entree = REGLES.entreeDouche(W);
     const verre = creerBoite(g, W - entree, 2.05, 0.008, M.verre, entree + (W - entree) / 2, 1.025, z0);
     verre.castShadow = false;
     creerBoite(g, W - entree, 0.02, 0.03, M.metal, entree + (W - entree) / 2, 0.012, z0);
@@ -558,7 +519,8 @@ function agencement(g, M, cfg, W, D, H, murs) {
 
   else if (parti === 'wetroom') {
     /* --- pas de paroi, estrade + ofuro --- */
-    const lE = Math.min(1.8, W * 0.6), pE = Math.min(1.3, D * 0.45), hE = 0.55;
+    const est = REGLES.estrade(W, D);
+    const lE = est.longueur, pE = est.profondeur, hE = est.hauteur;
     const z0 = D - pE;
     creerBoite(g, 0.22, hE, pE, M.bois, 0.11, hE / 2, z0 + pE / 2);
     const bx0 = 0.28, bx1 = Math.min(lE - 0.28, bx0 + 1.25), ep = 0.055;
@@ -605,7 +567,7 @@ function agencement(g, M, cfg, W, D, H, murs) {
 
   else {
     /* --- spa : douche d'angle + baignoire si la place le permet --- */
-    const s = Math.max(0.85, Math.min(1.5, Math.min(W, D) * 0.46));
+    const s = REGLES.douche(W, D);
     const x0 = W - s, z0 = D - s;
     const bac = panneau(g, s, s, M.mosaique);
     bac.rotation.x = -Math.PI / 2; bac.position.set(x0, 0.004, D);
@@ -639,8 +601,9 @@ function agencement(g, M, cfg, W, D, H, murs) {
 
     const largeurLibre = x0;
     const profLibre = z0;
-    if (opt.baignoire !== false && largeurLibre >= 1.5 && profLibre >= 0.95 && W * D >= 5) {
-      const lb = Math.min(1.7, largeurLibre - 0.12), la = Math.min(0.78, profLibre - 0.1);
+    if (opt.baignoire !== false && REGLES.baignoireTient(W, D, largeurLibre, profLibre)) {
+      const bg = REGLES.baignoire(largeurLibre, profLibre);
+      const lb = bg.longueur, la = bg.largeur;
       baignoireIlot(g, M, W - 0.08 - lb / 2, 0.12 + la / 2, lb, la, 0);
       creerCyl(g, 0.055, 0.055, 0.012, M.metal, W - 0.12 - lb, 0.006, 0.12 + la / 2, 20);
       creerCyl(g, 0.024, 0.024, 1, M.metal, W - 0.12 - lb, 0.5, 0.12 + la / 2, 16);
@@ -650,7 +613,8 @@ function agencement(g, M, cfg, W, D, H, murs) {
     } else if (opt.baignoire !== false) {
       resume.alertes.push('Pas assez de place pour une baignoire îlot : douche seule.');
     }
-    if (W * D < 4) resume.alertes.push('Moins de 4 m² : vérifier la circulation devant chaque appareil.');
+    if (REGLES.circulationTendue(W, D))
+      resume.alertes.push('Moins de 4 m² : vérifier la circulation devant chaque appareil.');
 
     if (opt.plantes !== false) {
       const px = Math.min(x0 - 0.35, 0.75), pz = Math.max(0.5, z0 - 0.4);
@@ -761,71 +725,12 @@ function construire(cfg) {
   /* ---- métré : tout est déduit de la géométrie réellement construite ---- */
   const aireOuvertures = lp * Math.min(hp, bandeau)
     + (trousDroite ? trousDroite[0][2] * Math.max(0, Math.min(bandeau, trousDroite[0][1] + trousDroite[0][3]) - trousDroite[0][1]) : 0);
-  const perimetre = 2 * (W + D);
-  const solM2 = W * D;
-  const faienceM2 = Math.max(0, perimetre * bandeau - aireOuvertures);
-  const enduitM2 = Math.max(0, perimetre * (H - bandeau));
-  const zoneHumide = cfg.parti === 'wetroom' ? solM2 : Math.min(solM2, 2.2);
-  resume.metre = {
-    solM2, faienceM2, enduitM2, perimetre, bandeau,
-    volumeM3: solM2 * H,
-    carrelageM2: faienceM2 + solM2,
-    carreaux: Math.ceil((faienceM2 + zoneHumide) * 100 * 1.08),
-    etancheiteM2: cfg.parti === 'wetroom' ? solM2 + perimetre * 2 : zoneHumide + Math.sqrt(zoneHumide) * 2 * 2,
-    ouverturesM2: aireOuvertures
-  };
+  resume.metre = metrer({ W, D, H, bandeau, ouverturesM2: aireOuvertures, parti: cfg.parti });
   if (cfg.options?.verriere && trousDroite) resume.postes.push('verriere');
   resume.postes.push('depose');
 
   return { racine, groupe: g, murs, M, W, D, H, resume, dims: { L, P, H } };
 }
-
-/* =======================================================================
-   8 bis. ESTIMATION
-   Fourchette indicative de fournitures et de pose, jamais un devis.
-   ======================================================================= */
-const LIBELLES = {
-  douche: 'Douche : receveur de plain-pied, paroi, robinetterie',
-  baignoire: 'Baignoire îlot et robinetterie',
-  vasque: 'Meuble vasque, plan, mitigeur, miroir',
-  wc: 'WC suspendu, bâti-support, plaque',
-  ofuro: 'Bain japonais encastré et estrade',
-  claustra: 'Claustra bois',
-  verriere: 'Fenêtre haute / verrière',
-  depose: 'Dépose de l’existant et évacuation'
-};
-
-export function estimer(resume, cfg, tarifs = {}) {
-  const t = { ...TARIFS, ...tarifs };
-  const m = resume.metre;
-  const f = FAIENCES[cfg.materiaux.faience] ?? FAIENCES.emeraude;
-  const coef = (METAUX[cfg.materiaux.metal] ?? METAUX.chrome).coef;
-  const prixFaience = Number(t.faience) > 0 ? Number(t.faience) : f.prix;
-  const lignes = [];
-  const ligne = (libelle, detail, montant) =>
-    lignes.push({ libelle, detail, montant: Math.round(montant) });
-
-  ligne('Faïence murale', `${arr(m.faienceM2)} m² × ${prixFaience} € (${f.nom.toLowerCase()}, ${f.format})`,
-    m.faienceM2 * prixFaience);
-  ligne('Revêtement de sol', `${arr(m.solM2)} m² × ${t.sol} €`, m.solM2 * t.sol);
-  ligne('Étanchéité sous carrelage', `${arr(m.etancheiteM2)} m² × ${t.etancheite} €`,
-    m.etancheiteM2 * t.etancheite);
-  ligne('Pose du carrelage', `${arr(m.carrelageM2)} m² × ${t.poseM2} €`, m.carrelageM2 * t.poseM2);
-
-  const vus = new Set();
-  for (const p of resume.postes) {
-    if (vus.has(p) || !t[p]) continue;
-    vus.add(p);
-    const majore = (p === 'douche' || p === 'baignoire' || p === 'vasque') ? coef : 1;
-    ligne(LIBELLES[p] ?? p, majore > 1 ? `robinetterie ${(METAUX[cfg.materiaux.metal] ?? {}).nom?.toLowerCase() ?? ''}` : '',
-      t[p] * majore);
-  }
-  const total = lignes.reduce((a, l) => a + l.montant, 0);
-  return { lignes, total, bas: Math.round(total * 0.88 / 50) * 50, haut: Math.round(total * 1.18 / 50) * 50 };
-}
-const arr = (v) => v.toFixed(1).replace('.', ',');
-export const euros = (v) =>
-  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
 
 /* =======================================================================
    8 ter. MARQUEURS D'ANNOTATION
@@ -1088,14 +993,27 @@ export function creerVue(hote, options = {}) {
     scene.background.set(n ? 0x08090b : 0x0d0f11);
   }
 
+  /* Les vues d'intérieur visent des équipements, qui sont posés dans le repère
+     canonique (porte au sud) avant que la pièce ne soit pivotée. Elles sont donc
+     décrites dans ce repère puis transformées comme la pièce — sans quoi elles
+     pointent le mauvais mur dès que la porte n'est pas au sud. Les vues
+     extérieures, elles, restent dans le repère du monde pour que la maquette se
+     présente toujours de la même façon. */
   const VUES = () => {
     const { L, P, H } = piece.dims;
+    const W = piece.W, D = piece.D;
+    const wetroom = cfgCourant?.parti === 'wetroom';
+    /* le meuble vasque est adossé au mur gauche, sauf en wetroom où la console
+       monolithe passe à droite */
+    const murVasque = wetroom ? W : 0;
+    const reculVasque = wetroom ? W * 0.35 : W * 0.72;
     return {
-      ensemble: { p: [L * 1.75, H * 1.5, P * 1.85], t: [L / 2, H * 0.32, P / 2] },
-      entree:   { p: [L * 0.5, Math.min(1.65, H * 0.65), 0.35], t: [L * 0.6, H * 0.4, P] },
-      douche:   { p: [L * 0.25, Math.min(1.7, H * 0.68), P * 0.22], t: [L * 0.8, H * 0.5, P * 0.85] },
-      vasque:   { p: [L * 0.72, Math.min(1.6, H * 0.62), P * 0.62], t: [0.1, H * 0.45, P * 0.42] },
-      plan:     { p: [L / 2, Math.max(L, P) * 3.1, P / 2 + 0.02], t: [L / 2, 0.3, P / 2] }
+      ensemble: { monde: true, p: [L * 1.75, H * 1.5, P * 1.85], t: [L / 2, H * 0.32, P / 2] },
+      plan:     { monde: true, p: [L / 2, Math.max(L, P) * 3.1, P / 2 + 0.02], t: [L / 2, 0.3, P / 2] },
+      entree:   { p: [W * 0.5, Math.min(1.65, H * 0.65), 0.45], t: [W * 0.55, H * 0.4, D] },
+      douche:   { p: [W * 0.22, Math.min(1.7, H * 0.68), D * 0.2], t: [W * 0.78, H * 0.5, D * 0.88] },
+      vasque:   { p: [reculVasque, Math.min(1.6, H * 0.62), D * 0.62],
+                  t: [murVasque, H * 0.45, D * 0.42] }
     };
   };
   let tween = null;
@@ -1103,6 +1021,11 @@ export function creerVue(hote, options = {}) {
     if (!piece) return;
     const v = VUES()[nom] ?? VUES().ensemble;
     const p = new THREE.Vector3(...v.p), t = new THREE.Vector3(...v.t);
+    if (!v.monde) {
+      piece.groupe.updateMatrixWorld(true);
+      p.applyMatrix4(piece.groupe.matrixWorld);
+      t.applyMatrix4(piece.groupe.matrixWorld);
+    }
     if (instantane) { camera.position.copy(p); controls.target.copy(t); tween = null; }
     else tween = { p, t, p0: camera.position.clone(), t0: controls.target.clone(), k: 0 };
   }
