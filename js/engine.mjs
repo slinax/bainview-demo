@@ -8,6 +8,15 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 /* =======================================================================
    1. CATALOGUE
@@ -208,7 +217,7 @@ function materiaux(cfg) {
     metalMat: new THREE.MeshStandardMaterial({ color: met.hex, metalness: 1, roughness: Math.min(1, met.rug + 0.2), envMapIntensity: 0.9 }),
     noir: new THREE.MeshStandardMaterial({ color: 0x15181a, metalness: 0.35, roughness: 0.55 }),
     ceramique: new THREE.MeshPhysicalMaterial({ color: 0xfbfaf7, roughness: 0.12, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04 }),
-    miroir: new THREE.MeshStandardMaterial({ color: 0xc9d2d4, metalness: 1, roughness: 0.06, envMapIntensity: 1.15 }),
+    miroir: new THREE.MeshStandardMaterial({ color: 0x9fadb2, metalness: 1, roughness: 0.075, envMapIntensity: 0.85 }),
     verre: new THREE.MeshPhysicalMaterial({
       color: 0xe6f4f0, metalness: 0, roughness: 0.02, transmission: 0.97,
       thickness: 0.006, ior: 1.5, transparent: true, envMapIntensity: 0.22
@@ -421,7 +430,7 @@ function meubleVasque(g, M, x0, z0, longueur, prof, cote) {
   /* miroir */
   const hm = Math.min(1.5, 0.9 + longueur * 0.3);
   const ym = 1.35 + hm / 2;
-  const halo = creerBoite(g, 0.012, hm + 0.14, longueur - 0.02, M.led, x0 + cote * 0.006, ym, zc);
+  const halo = creerBoite(g, 0.012, hm + 0.1, longueur - 0.06, M.led, x0 + cote * 0.006, ym, zc);
   const glace = creerBoite(g, 0.012, hm, longueur - 0.1, M.miroir, x0 + cote * 0.03, ym, zc);
   return { hauteurMiroir: ym + hm / 2, mural: [halo, glace] };
 }
@@ -861,7 +870,109 @@ export function creerVue(hote, options = {}) {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
   const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 100);
+
+  /* Chaîne de post-traitement : occlusion ambiante par GTAO, puis correction
+     colorimétrique, puis anticrénelage SMAA (l'antialias matériel du contexte
+     ne s'applique pas aux cibles de rendu du compositeur). */
+  const composer = new EffectComposer(renderer);
+  const passeRendu = new RenderPass(scene, camera);
+  composer.addPass(passeRendu);
+  const gtao = new GTAOPass(scene, camera, 1, 1);
+  gtao.blendIntensity = 0.85;
+  gtao.updateGtaoMaterial({
+    radius: 0.22, distanceExponent: 1.2, thickness: 0.4,
+    scale: 1.0, samples: 16, screenSpaceRadius: false
+  });
+  composer.addPass(gtao);
+  composer.addPass(new OutputPass());
+  const smaa = new SMAAPass(1, 1);
+  composer.addPass(smaa);
+  let qualiteHaute = !options.qualiteBasse;
+
+  /* Étiquettes de cotation : du HTML positionné en 3D, donc toujours net */
+  const rendu2D = new CSS2DRenderer();
+  rendu2D.domElement.style.cssText =
+    'position:absolute;inset:0;pointer-events:none;overflow:hidden';
+  hote.appendChild(rendu2D.domElement);
+
   const controls = new OrbitControls(camera, renderer.domElement);
+
+  /* ---------------------------------------------------------- cotation --
+     Lignes épaisses (Line2) parce qu'une ligne d'un pixel disparaît à
+     l'impression, et étiquettes HTML pour rester lisibles à toute distance. */
+  const materiauCote = new LineMaterial({
+    color: 0xffffff, linewidth: 1.6, transparent: true, opacity: 0.75,
+    depthTest: false, resolution: new THREE.Vector2(1, 1)
+  });
+  const groupeCotes = new THREE.Group();
+  groupeCotes.visible = false;
+  scene.add(groupeCotes);
+  let cotesDemandees = false;
+
+  function ligneCote(a, b) {
+    const g = new LineGeometry();
+    g.setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+    const l = new Line2(g, materiauCote);
+    l.computeLineDistances();
+    l.renderOrder = 998;
+    groupeCotes.add(l);
+    return l;
+  }
+  function etiquetteCote(texte, position) {
+    const d = document.createElement('div');
+    d.className = 'cote-3d';
+    d.textContent = texte;
+    d.style.cssText =
+      'font:500 11px/1 Archivo,Segoe UI,sans-serif;color:#0f1412;background:rgba(255,255,255,.92);' +
+      'border-radius:4px;padding:3px 6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.28);' +
+      'transform:translate(-50%,-50%);user-select:none';
+    const o = new CSS2DObject(d);
+    o.position.copy(position);
+    groupeCotes.add(o);
+    return o;
+  }
+  const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+  const metres = (v) => v.toFixed(2).replace('.', ',') + ' m';
+
+  /* une cote = un trait, deux pattes d'extrémité, une étiquette au milieu */
+  function coter(a, b, decalage, texte) {
+    const d = new THREE.Vector3().subVectors(b, a);
+    const perp = V3(-d.z, 0, d.x).normalize().multiplyScalar(decalage);
+    const a2 = a.clone().add(perp), b2 = b.clone().add(perp);
+    ligneCote(a2, b2);
+    ligneCote(a, a2.clone().addScaledVector(perp.clone().normalize(), 0.06));
+    ligneCote(b, b2.clone().addScaledVector(perp.clone().normalize(), 0.06));
+    etiquetteCote(texte, a2.clone().lerp(b2, 0.5).setY(a2.y + 0.04));
+  }
+
+  function construireCotes() {
+    for (const o of [...groupeCotes.children]) {
+      groupeCotes.remove(o);
+      if (o.isLine2) o.geometry.dispose();
+      if (o.element) o.element.remove();
+    }
+    if (!piece) return;
+    const { L, P, H } = piece.dims;
+    const y = 0.015, e = 0.3;
+    coter(V3(0, y, 0), V3(L, y, 0), -e, metres(L));
+    coter(V3(L, y, 0), V3(L, y, P), -e, metres(P));
+    /* hauteur sous plafond, en élévation dans l'angle libre */
+    const x0 = -e, z0 = -e;
+    ligneCote(V3(x0, 0, z0), V3(x0, H, z0));
+    ligneCote(V3(x0 - 0.06, 0, z0), V3(x0 + 0.06, 0, z0));
+    ligneCote(V3(x0 - 0.06, H, z0), V3(x0 + 0.06, H, z0));
+    etiquetteCote('h. ' + metres(H), V3(x0, H / 2, z0));
+    etiquetteCote(
+      (L * P).toFixed(1).replace('.', ',') + ' m² au sol',
+      V3(L / 2, y, P / 2)
+    );
+  }
+  function afficherCotes(actif) {
+    cotesDemandees = actif;
+    if (actif && !groupeCotes.children.length) construireCotes();
+    groupeCotes.visible = actif;
+  }
+
   controls.enableDamping = true; controls.dampingFactor = 0.06;
   controls.minDistance = 0.5; controls.maxDistance = 25;
   controls.maxPolarAngle = Math.PI * 0.497;
@@ -920,6 +1031,7 @@ export function creerVue(hote, options = {}) {
     }
     ambiance(nuit);
     dessinerMarqueurs();
+    if (cotesDemandees) construireCotes();
     return piece.resume;
   }
 
@@ -1010,6 +1122,12 @@ export function creerVue(hote, options = {}) {
   function redimensionner() {
     const w = hote.clientWidth || 800, h = hote.clientHeight || 600;
     renderer.setSize(w, h, false);
+    composer.setSize(w, h);
+    const dpr = renderer.getPixelRatio();
+    gtao.setSize(w * dpr, h * dpr);
+    smaa.setSize(w * dpr, h * dpr);
+    rendu2D.setSize(w, h);
+    materiauCote.resolution.set(w * dpr, h * dpr);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
@@ -1027,14 +1145,22 @@ export function creerVue(hote, options = {}) {
     }
     murs();
     controls.update();
-    renderer.render(scene, camera);
+    dessiner();
+    rendu2D.render(scene, camera);
   });
+
+  function dessiner() {
+    if (qualiteHaute) composer.render();
+    else renderer.render(scene, camera);
+  }
 
   return {
     maj(cfg) { const r = maj(cfg); if (!controls.target.lengthSq()) vue('ensemble', true); return r; },
     vue,
     ambiance,
     rotation(on) { controls.autoRotate = on; },
+    qualite(haute) { qualiteHaute = !!haute; },
+    cotes(actif) { afficherCotes(!!actif); },
     marqueurs(liste, couleur) {
       listeMarqueurs = Array.isArray(liste) ? liste : [];
       if (couleur) couleurMarqueur = couleur;
@@ -1047,24 +1173,44 @@ export function creerVue(hote, options = {}) {
     },
     /* captures pour la fiche imprimable : on change de point de vue,
        on rend, on restitue la caméra du visiteur */
-    async captures(noms) {
+    /* Captures pour la fiche : on force une taille fixe pour que le PDF sorte
+       identique quel que soit l'écran, puis on restitue l'affichage. */
+    async captures(noms, largeur = 1600, hauteur = 1000) {
       const posAvant = camera.position.clone(), cibleAvant = controls.target.clone();
+      const dprAvant = renderer.getPixelRatio();
+      const cotesAvant = groupeCotes.visible;
+      const fondAvant = scene.background.getHex();
+      groupeCotes.visible = false;
+      /* fond clair : ces images finissent sur une page blanche */
+      scene.background.set(0xf2f4f2);
+      renderer.setPixelRatio(1);
+      renderer.setSize(largeur, hauteur, false);
+      composer.setSize(largeur, hauteur);
+      gtao.setSize(largeur, hauteur);
+      smaa.setSize(largeur, hauteur);
+      camera.aspect = largeur / hauteur;
+      camera.updateProjectionMatrix();
       const sorties = {};
       for (const n of noms) {
         vue(n, true);
         controls.update();
         murs();
-        renderer.render(scene, camera);
-        renderer.render(scene, camera);
-        sorties[n] = renderer.domElement.toDataURL('image/jpeg', 0.86);
+        dessiner();
+        dessiner();
+        sorties[n] = renderer.domElement.toDataURL('image/jpeg', 0.92);
       }
+      sorties.ratio = largeur / hauteur;
       camera.position.copy(posAvant);
       controls.target.copy(cibleAvant);
       controls.update();
+      renderer.setPixelRatio(dprAvant);
+      scene.background.set(fondAvant);
+      groupeCotes.visible = cotesAvant;
+      redimensionner();
       return sorties;
     },
     png(nom) {
-      renderer.render(scene, camera);
+      dessiner();
       const a = document.createElement('a');
       a.download = (nom ?? 'apercu') + '.png';
       a.href = renderer.domElement.toDataURL('image/png');

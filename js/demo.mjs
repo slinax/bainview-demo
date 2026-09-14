@@ -1,6 +1,7 @@
 /* Bainview — démonstration publique.
    Aucun serveur : la configuration vit dans le navigateur du visiteur. */
 import { creerVue, configParDefaut, estimer, euros, FAIENCES, METAUX, BOIS, PARTIS } from './engine.mjs';
+import { telechargerPdf, pdfDisponible } from './fiche.mjs';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -122,57 +123,6 @@ function synchroniser() {
   majSurface();
 }
 
-/* ----------------------------------------------------- fiche à imprimer */
-function construireFiche(img) {
-  const c = etat.config, m = dernierResume.metre, e = dernierChiffrage, p = c.piece;
-  const ent = etat.entreprise;
-  const nomEnt = ent.nom || 'Votre entreprise';
-  const jour = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
-  $('#fiche').innerHTML =
-    '<div class="entete">' +
-      `<div class="pastille-logo" style="background:${ent.couleur}">${echapper(nomEnt.charAt(0).toUpperCase())}</div>` +
-      `<div><div style="font-weight:600;font-size:13pt">${echapper(nomEnt)}</div>` +
-      `<div style="font-size:9.5pt;color:#54625b">${echapper(ent.telephone)}</div></div>` +
-      `<div style="margin-left:auto;text-align:right;font-size:9pt;color:#8a978f">Fiche projet<br>${jour}</div>` +
-    '</div>' +
-    `<h1>${echapper(etat.projet.nom)}</h1>` +
-    '<div style="font-size:10.5pt;color:#54625b;margin-bottom:4mm">' +
-      (etat.projet.client ? echapper(etat.projet.client) + ' &middot; ' : '') +
-      `${dim(p.L)} &times; ${dim(p.P)} m sous ${dim(p.H)} m &middot; ${arrondi(p.L * p.P)} m² &middot; ` +
-      echapper(PARTIS[c.parti]?.nom ?? '') +
-    '</div>' +
-    '<div class="vues">' +
-      `<img class="grande" src="${img.ensemble}" alt="Vue d’ensemble">` +
-      `<img src="${img.douche}" alt="Douche"><img src="${img.vasque}" alt="Vasque">` +
-    '</div>' +
-    '<div class="cols eviter"><div><h2>Aménagement</h2><table>' +
-      dernierResume.elements.map(x => `<tr><td>${echapper(x)}</td></tr>`).join('') +
-    '</table></div><div><h2>Matériaux</h2><table>' +
-      `<tr><td>Faïence</td><td class="n">${echapper(FAIENCES[c.materiaux.faience].nom)}</td></tr>` +
-      `<tr><td>Format</td><td class="n">${echapper(FAIENCES[c.materiaux.faience].format)}</td></tr>` +
-      `<tr><td>Robinetterie</td><td class="n">${echapper(METAUX[c.materiaux.metal].nom)}</td></tr>` +
-      `<tr><td>Bois</td><td class="n">${echapper(BOIS[c.materiaux.bois].nom)}</td></tr>` +
-    '</table></div></div>' +
-    '<div class="cols eviter"><div><h2>Métré</h2><table>' +
-      `<tr><td>Faïence murale</td><td class="n">${arrondi(m.faienceM2)} m²</td></tr>` +
-      `<tr><td>Sol</td><td class="n">${arrondi(m.solM2)} m²</td></tr>` +
-      `<tr><td>Étanchéité sous carrelage</td><td class="n">${arrondi(m.etancheiteM2)} m²</td></tr>` +
-      `<tr><td>Carreaux, chute 8 % comprise</td><td class="n">${m.carreaux.toLocaleString('fr-FR')}</td></tr>` +
-      `<tr><td>Volume de la pièce</td><td class="n">${arrondi(m.volumeM3)} m³</td></tr>` +
-    '</table></div>' +
-    `<div><h2>Plan</h2><img src="${img.plan}" alt="Vue en plan" style="width:100%;border:1px solid #dde4dd;border-radius:2mm"></div></div>` +
-    '<h2>Estimation indicative</h2><table><thead><tr><th>Poste</th><th class="n">Montant HT</th></tr></thead><tbody>' +
-      e.lignes.map(x => `<tr><td>${echapper(x.libelle)}</td><td class="n">${euros(x.montant)}</td></tr>`).join('') +
-      `<tr class="total"><td>Fourchette estimée</td><td class="n">${euros(e.bas)} – ${euros(e.haut)}</td></tr>` +
-    '</tbody></table>' +
-    '<div class="mentions-pdf">Document non contractuel, produit par une démonstration. ' +
-    'Les images sont une représentation de principe ; les teintes, les références et les ' +
-    'dimensions restent à confirmer sur place. L’estimation est calculée automatiquement à ' +
-    'partir de tarifs de référence : elle ne constitue ni un devis ni un engagement de prix.' +
-    '<br>Aperçu réalisé avec Bainview.</div>';
-  $('#fiche').hidden = false;
-}
-
 /* ---------------------------------------------------------- démarrage -- */
 function commandes() {
   $('#partis').innerHTML = Object.entries(PARTIS).map(([cle, p]) =>
@@ -237,6 +187,14 @@ function commandes() {
   $('#btnNuit').onclick = () => { vue.ambiance(true); $('#btnNuit').classList.add('actif'); $('#btnJour').classList.remove('actif'); };
   let rot = false;
   $('#btnRotation').onclick = () => { rot = !rot; vue.rotation(rot); $('#btnRotation').classList.toggle('actif', rot); };
+  let cotes = false;
+  $('#btnCotes').onclick = () => { cotes = !cotes; vue.cotes(cotes); $('#btnCotes').classList.toggle('actif', cotes); };
+  let hq = true;
+  $('#btnQualite').onclick = () => {
+    hq = !hq; vue.qualite(hq);
+    $('#btnQualite').classList.toggle('actif', hq);
+    $('#btnQualite').textContent = hq ? 'Qualité+' : 'Rapide';
+  };
 
   const fichier = () => (etat.projet.nom || 'projet').toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -250,11 +208,25 @@ function commandes() {
   };
   $('#btnFiche').onclick = async () => {
     const b = $('#btnFiche'), t = b.textContent;
+    if (!pdfDisponible()) { alert('La bibliothèque PDF n’a pas pu être chargée. Vérifiez votre connexion.'); return; }
     b.textContent = 'Préparation…'; b.disabled = true;
     try {
-      construireFiche(await vue.captures(['ensemble', 'douche', 'vasque', 'plan']));
-      await new Promise(r => setTimeout(r, 150));
-      window.print();
+      telechargerPdf({
+        entreprise: {
+          nom: etat.entreprise.nom || 'Votre entreprise',
+          telephone: etat.entreprise.telephone,
+          couleur: etat.entreprise.couleur,
+          contact: ''
+        },
+        projet: etat.projet,
+        config: etat.config,
+        resume: dernierResume,
+        chiffrage: dernierChiffrage,
+        images: await vue.captures(['ensemble', 'douche', 'vasque', 'plan'])
+      }, fichier());
+    } catch (e) {
+      console.error(e);
+      alert('La fiche n’a pas pu être produite : ' + e.message);
     } finally { b.textContent = t; b.disabled = false; }
   };
   $('#btnCsv').onclick = () => {
