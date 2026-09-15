@@ -760,7 +760,12 @@ function textureMarqueur(n, couleur) {
    ======================================================================= */
 export function creerVue(hote, options = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  /* Un client ouvre le lien sur son téléphone : la fluidité prime sur la finesse.
+     On plafonne la densité de pixels sur écran tactile, et on renonce à
+     l'occlusion ambiante sur les machines manifestement modestes. */
+  const tactile = matchMedia('(pointer: coarse)').matches;
+  const modeste = (navigator.hardwareConcurrency ?? 8) <= 4;
+  renderer.setPixelRatio(Math.min(devicePixelRatio, tactile ? 1.5 : 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -792,7 +797,7 @@ export function creerVue(hote, options = {}) {
   composer.addPass(new OutputPass());
   const smaa = new SMAAPass(1, 1);
   composer.addPass(smaa);
-  let qualiteHaute = !options.qualiteBasse;
+  let qualiteHaute = !options.qualiteBasse && !modeste;
 
   /* Étiquettes de cotation : du HTML positionné en 3D, donc toujours net */
   const rendu2D = new CSS2DRenderer();
@@ -964,7 +969,9 @@ export function creerVue(hote, options = {}) {
     if (!pointageActif || !depart || !piece) return;
     const dx = e.clientX - depart[0], dy = e.clientY - depart[1];
     depart = null;
-    if (dx * dx + dy * dy > 36) return;
+    /* au doigt, un « tap » bouge davantage qu'au curseur : 12 px de tolérance */
+    const tolerance = e.pointerType === 'touch' ? 144 : 36;
+    if (dx * dx + dy * dy > tolerance) return;
     const r = renderer.domElement.getBoundingClientRect();
     const souris = new THREE.Vector2(
       ((e.clientX - r.left) / r.width) * 2 - 1,
