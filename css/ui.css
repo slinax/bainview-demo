@@ -241,9 +241,14 @@ button:disabled{opacity:.5;cursor:not-allowed}
 @media (max-width:860px){
   /* dvh plutôt que vh : la barre d'adresse mobile ne doit pas rogner la page */
   .appli,.client{height:100dvh}
+  /* la 3D passe en tête : c'est elle qu'on vient voir, les réglages suivent */
   .corps{flex-direction:column}
-  .panneau{width:100%;max-height:44dvh;border-right:none;border-bottom:1px solid var(--line)}
-  .scene{min-height:0}
+  .scene{order:-1;flex:0 0 46dvh;min-height:220px}
+  .panneau{
+    width:100%;flex:1 1 auto;max-height:none;overflow-y:auto;
+    border-right:none;border-top:1px solid var(--line);border-bottom:none;
+    padding:16px 16px 32px;
+  }
   .resume{display:none}
 
   .zone{flex-direction:column}
@@ -280,6 +285,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 /* ---------- petits téléphones ---------- */
 @media (max-width:420px){
   .zone .scene{flex:0 0 46dvh}
+  .corps>.scene{flex:0 0 42dvh}
   .barre{padding:0 12px;gap:8px}
   .barre .btn-f{padding:7px 8px;font-size:13px}
 }
